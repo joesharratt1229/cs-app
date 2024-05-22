@@ -69,73 +69,40 @@ team_t team = {
 
 //macros for explicit list
 #define PUT_PTR(p, val) (*(char**)(p) = (char *)(val))
-#define UPD_PRV_PTR(bp, val) (PUT_PTR(bp, val))
-#define UPD_NXT_PTR(bp, val)  (PUT_PTR(bp + WORD_SIZE, val))
 
-#define GET_PRV_PTR(bp) (*(char**)(bp))
-#define GET_NEXT_PTR(bp) (*(char**)(bp + WORD_SIZE))
+#define GET_PRV_PTR(bp) (*(char **)(bp))
+#define GET_NEXT_PTR(bp) (*(char **)(bp + WORD_SIZE))
 
 
 
-char* expl_ptr = NULL;
+char* expl_ptr = 0;
 char* heap_lp;
 
 
 void pushNode(char* ptr)
 {
-    if (expl_ptr == NULL){
-        expl_ptr = ptr;
-        UPD_PRV_PTR(expl_ptr, NULL);
-        UPD_NXT_PTR(expl_ptr, NULL);
-        return; 
-    }
-
-    UPD_PRV_PTR(ptr, expl_ptr);
-    UPD_NXT_PTR(ptr, NULL);
-    UPD_NXT_PTR(expl_ptr, ptr);
+    GET_NEXT_PTR(ptr) = expl_ptr;
+    GET_PRV_PTR(expl_ptr) = ptr;
+    GET_PRV_PTR(ptr) = NULL;
     expl_ptr = ptr;
-    return;
-    
 }
 
 
 
 void deleteNode(char* ptr)
 {    
-    if((ptr == expl_ptr) && (GET_PRV_PTR(ptr) == NULL))
-    {
-        expl_ptr = NULL;
-        return;
+    if(GET_PRV_PTR(ptr) == NULL){
+        expl_ptr = GET_NEXT_PTR(ptr);
+    } else {
+        GET_NEXT_PTR(GET_PRV_PTR(ptr)) = GET_NEXT_PTR(ptr);
     }
 
-    if(ptr == expl_ptr){
-        expl_ptr = GET_PRV_PTR(ptr);
-        UPD_NXT_PTR(expl_ptr, NULL);
-        return;
-    }
-    
-    char* temp = expl_ptr;
-    char* above = NULL;
-    char* prev = NULL;
-
-    while((temp != NULL) && (temp != ptr))
-    {
-        temp = GET_PRV_PTR(temp);
-        above = GET_NEXT_PTR(temp);
-        prev = GET_PRV_PTR(temp);
-    }
-
-    UPD_PRV_PTR(above, prev);
-    if (prev != NULL)
-    {
-        UPD_NXT_PTR(prev, above);
-    }
-    
+    GET_PRV_PTR(GET_NEXT_PTR(ptr)) = GET_PRV_PTR(ptr);
 }
 
 static void *coalesce(char* ptr)
 {
-    size_t alloc_prev = GET_ALLOC(FTPTR(GET_PREV(ptr)));
+    size_t alloc_prev = GET_ALLOC(FTPTR(GET_PREV(ptr)))  || GET_PREV(ptr) == ptr;
     size_t alloc_next = GET_ALLOC(HDPTR(GET_NEXT(ptr)));
     size_t curr_size = GET_SIZE(HDPTR(ptr));
 
@@ -146,48 +113,45 @@ static void *coalesce(char* ptr)
         return ptr;
     } else if (alloc_next && !alloc_prev)
     {
-        char* p_ptr = GET_PREV(ptr);
-        size_t p_size = GET_SIZE(HDPTR(p_ptr));
-        curr_size += p_size;
-        PUT(HDPTR(p_ptr), PACK(curr_size, 0));
+        curr_size += GET_SIZE(HDPTR(GET_PREV(ptr)));
+        deleteNode(GET_PREV(ptr));
+        PUT(HDPTR(GET_PREV(ptr)), PACK(curr_size, 0));
         PUT(FTPTR(ptr), PACK(curr_size, 0));
-        //delete old version further down and then push it back on the list
-        deleteNode(p_ptr);
-        pushNode(p_ptr);
-        return p_ptr;
-    } else if(!alloc_next &&alloc_prev){
-        char* n_ptr = GET_NEXT(ptr);
-        size_t n_size = GET_SIZE(HDPTR(n_ptr));
-        curr_size += n_size;
-        PUT(HDPTR(ptr), PACK(curr_size, 0));
-        PUT(FTPTR(n_ptr), PACK(curr_size, 0));
-        deleteNode(n_ptr);
-        pushNode(ptr);
-        return ptr;
-    } else {
-            char* n_ptr = GET_NEXT(ptr);
-            char* p_ptr = GET_PREV(ptr);
+        ptr = GET_PREV(ptr);
 
-            curr_size += GET_SIZE(HDPTR(p_ptr)) + GET_SIZE(FTPTR(n_ptr));
-            PUT(HDPTR(p_ptr), PACK(curr_size, 0));
-            PUT(FTPTR(n_ptr), PACK(curr_size, 0));
-            deleteNode(p_ptr);
-            deleteNode(n_ptr);
-            pushNode(p_ptr);
-            return p_ptr;
+    } else if(!alloc_next &&alloc_prev){
+
+        curr_size += GET_SIZE(HDPTR(GET_NEXT(ptr)));
+        deleteNode(GET_NEXT(ptr));
+        PUT(HDPTR(ptr), PACK(curr_size, 0));
+        PUT(FTPTR(ptr), PACK(curr_size, 0));
+
+
+    } else {
+           curr_size += GET_SIZE(HDPTR(GET_PREV(ptr))) + GET_SIZE(FTPTR(GET_NEXT(ptr)));
+           deleteNode(GET_PREV(ptr));
+           deleteNode(GET_NEXT(ptr));
+           PUT(HDPTR(GET_PREV(ptr)), PACK(curr_size, 0));	
+           PUT(FTPTR(GET_NEXT(ptr)), PACK(curr_size, 0));
+           ptr = GET_PREV(ptr);
         }
+
+
+    pushNode(ptr);
+
+    return ptr;
 
 }
 
 
-static void *extend_heap(size_t incr, int init)
+static void *extend_heap(size_t incr)
 {
     char *bp;
     size_t new_incr;
 
     new_incr = (incr % 2) ? (incr+1) * WORD_SIZE : incr * WORD_SIZE;
 
-    if ((long)(bp = mem_sbrk(new_incr))==-1)
+    if ((bp = mem_sbrk(new_incr)) == (void *)-1)
     {
         return NULL;
     }
@@ -204,8 +168,7 @@ static void *extend_heap(size_t incr, int init)
 
 int mm_init(void)
 {
-    int init = 1;
-    if((heap_lp = mem_sbrk(4*WORD_SIZE)) == (void *)-1)
+    if((heap_lp = mem_sbrk(8*WORD_SIZE)) == (void *)-1)
     {
         return -1;
     }
@@ -216,8 +179,9 @@ int mm_init(void)
     PUT(heap_lp + (3*WORD_SIZE), PACK(0, 1)); //Epilgoue
 
     heap_lp += 2*WORD_SIZE;
+    expl_ptr = heap_lp;
 
-    if(extend_heap(CHUNK_SIZE/WORD_SIZE, init)==NULL){
+    if(extend_heap(CHUNK_SIZE/WORD_SIZE)==NULL){
         return -1;
     };
     return 0;
@@ -228,44 +192,34 @@ static void place(char* ptr, size_t size)
     //update headers to denote allocation
     //add shortened block on to heap
     size_t orig_size = GET_SIZE(HDPTR(ptr));
-    size_t shortened_size = orig_size - size;
-
-    PUT(HDPTR(ptr), PACK(size, 1));
-    PUT(FTPTR(ptr), PACK(size, 1));
-
-    deleteNode(ptr);
     
-    if (shortened_size == 0){
-        return; 
+    if ((orig_size - size) >= (2*D_SIZE)){
+        PUT(HDPTR(ptr), PACK(size, 1));
+        PUT(FTPTR(ptr), PACK(size, 1));
+        deleteNode(ptr);
+        ptr = GET_NEXT(ptr);
+        PUT(HDPTR(ptr), PACK(orig_size-size, 0));
+        PUT(FTPTR(ptr), PACK(orig_size - size, 0));
+        coalesce(ptr);
     } else {
-        char* n_ptr = GET_NEXT(ptr);
-        PUT(HDPTR(n_ptr), PACK(shortened_size, 0));
-        PUT(FTPTR(n_ptr), PACK(shortened_size, 0));
-        pushNode(n_ptr);
-        return;
+        PUT(HDPTR(ptr), PACK(orig_size, 1));
+		PUT(FTPTR(ptr), PACK(orig_size, 1));
+        deleteNode(ptr);
     }
 
 }
 
 static void *find_fit(size_t asize)
 {
-    size_t block_size = 0;
-    char* temp_ptr = expl_ptr;
+    char* bp;
 
-    while(temp_ptr != NULL)
-    {
-        if((block_size = GET_SIZE(HDPTR(temp_ptr)))> (asize+8)){
-            break;
+    for(bp = expl_ptr; GET_ALLOC(HDPTR(bp)); bp = GET_NEXT_PTR(bp)){
+        if(asize <= GET_SIZE(HDPTR(bp))){
+            return bp;
         }
-        temp_ptr = GET_PRV_PTR(temp_ptr);
-    }
+    }  
 
-    if (temp_ptr == NULL){
-        return NULL;
-    }
-
-    return temp_ptr;
-    
+    return NULL;
 }
 
 /* 
@@ -277,7 +231,6 @@ void *mm_malloc(size_t size)
     size_t asize;
     size_t extend_size;
     char* bp;
-    int init = 0;
 
     if (size == 0){
         return NULL;
@@ -297,7 +250,7 @@ void *mm_malloc(size_t size)
 
     extend_size = MAX(asize, CHUNK_SIZE);
 
-    if((bp = extend_heap(extend_size/WORD_SIZE, init)) == NULL){
+    if((bp = extend_heap(extend_size/WORD_SIZE)) == NULL){
         return NULL;
     }
 
@@ -311,16 +264,22 @@ void *mm_malloc(size_t size)
  */
 void mm_free(void *ptr)
 {
+    if (ptr == NULL){
+        return;
+    }
     size_t size = GET_SIZE(HDPTR(ptr));
     PUT(HDPTR(ptr), PACK(size, 0));
     PUT(FTPTR(ptr), PACK(size, 0));
 
-    pushNode(ptr); 
+    coalesce(ptr);
 }
 
 /*
  * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
  */
+
+
+
 void *mm_realloc(void *ptr, size_t size)
 {
     void *oldptr = ptr;
@@ -337,17 +296,3 @@ void *mm_realloc(void *ptr, size_t size)
     mm_free(oldptr);
     return newptr;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
