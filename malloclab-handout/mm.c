@@ -280,19 +280,48 @@ void mm_free(void *ptr)
 
 
 
+
+
 void *mm_realloc(void *ptr, size_t size)
 {
-    void *oldptr = ptr;
-    void *newptr;
-    size_t copySize;
+    char* new_ptr;
+
+    if ((ptr == NULL)){
+        return NULL;
+    }
+
+    if (size == 0){
+        mm_free(ptr);
+        return NULL;
+    }
+
+    if(ptr == NULL){
+        return mm_malloc(size);
+    }
+
+    size_t new_size = size + (2*WORD_SIZE);
     
-    newptr = mm_malloc(size);
-    if (newptr == NULL)
-      return NULL;
-    copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE);
-    if (size < copySize)
-      copySize = size;
-    memcpy(newptr, oldptr, copySize);
-    mm_free(oldptr);
-    return newptr;
-}
+    if(new_size <= GET_SIZE(HDPTR(ptr))){
+            place(ptr, new_size);
+            return ptr;
+    } else {
+            if ((new_ptr = find_fit(new_size)) != NULL){
+                place(new_ptr, new_size);
+
+            } else{
+                size_t extend_size = MAX(new_size, CHUNK_SIZE);
+                if((new_ptr = extend_heap(extend_size))==NULL){
+                    return NULL;
+                }
+
+                place(new_ptr, new_size);
+            }
+
+            memcpy(new_ptr, ptr, GET_SIZE(HDPTR(ptr)));
+            coalesce(ptr);
+            return new_ptr;
+    }
+} 
+
+
+
